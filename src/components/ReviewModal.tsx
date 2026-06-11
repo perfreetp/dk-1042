@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LineageGraph, LineageEdge, FileNode, Project } from '../types';
 
 interface ReviewModalProps {
@@ -10,12 +10,17 @@ interface ReviewModalProps {
 }
 
 const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEdgeUpdate, onFileDeprecated }) => {
-  const [filter, setFilter] = useState<'all' | 'uncertain' | 'confirmed' | 'deprecated'>('all');
-  const [fileFilter, setFileFilter] = useState<'all' | 'deprecated'>('all');
+  const [viewMode, setViewMode] = useState<'edges' | 'files'>('edges');
   const [selectedEdge, setSelectedEdge] = useState<LineageEdge | null>(null);
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
   const [reason, setReason] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [localProject, setLocalProject] = useState(project);
+
+  useEffect(() => {
+    setLocalProject(project);
+  }, [project]);
 
   const getEdgeDetails = (edge: LineageEdge) => {
     const source = graph.nodes.find(n => n.id === edge.source);
@@ -24,8 +29,8 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
   };
 
   const filteredEdges = graph.edges.filter(edge => {
-    const isConfirmed = project.confirmedEdges.includes(edge.id);
-    const isDeprecated = project.deprecatedEdges.includes(edge.id);
+    const isConfirmed = localProject.confirmedEdges.includes(edge.id);
+    const isDeprecated = localProject.deprecatedEdges.includes(edge.id);
     
     const matchesFilter = 
       filter === 'all' ||
@@ -40,22 +45,31 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
     return matchesFilter && matchesSearch;
   });
 
+  const [filter, setFilter] = useState<'all' | 'uncertain' | 'confirmed' | 'deprecated'>('all');
+
   const filteredFiles = graph.nodes.filter(node => {
-    const isDeprecated = project.deprecatedFiles.includes(node.id);
-    const matchesFileFilter = fileFilter === 'all' || (fileFilter === 'deprecated' && isDeprecated);
+    const isDeprecated = localProject.deprecatedFiles.includes(node.id);
     const matchesSearch = searchQuery === '' || node.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesFileFilter && matchesSearch;
+    return matchesSearch;
   });
 
-  const handleConfirm = () => {
+  const handleEdgeConfirm = () => {
     if (selectedEdge) {
+      const newConfirmed = localProject.confirmedEdges.includes(selectedEdge.id)
+        ? localProject.confirmedEdges
+        : [...localProject.confirmedEdges, selectedEdge.id];
+      setLocalProject({ ...localProject, confirmedEdges: newConfirmed });
       onEdgeUpdate(selectedEdge.id, { confirmed: true });
       setSelectedEdge(null);
     }
   };
 
-  const handleMarkDeprecatedEdge = () => {
+  const handleEdgeMarkDeprecated = () => {
     if (selectedEdge) {
+      const newDeprecated = localProject.deprecatedEdges.includes(selectedEdge.id)
+        ? localProject.deprecatedEdges
+        : [...localProject.deprecatedEdges, selectedEdge.id];
+      setLocalProject({ ...localProject, deprecatedEdges: newDeprecated });
       onEdgeUpdate(selectedEdge.id, { deprecated: true, reason });
       setSelectedEdge(null);
       setReason('');
@@ -69,9 +83,35 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
     }
   };
 
+  const handleFileToggleDeprecated = (fileId: string, current: boolean) => {
+    const newDeprecated = current
+      ? localProject.deprecatedFiles.filter(id => id !== fileId)
+      : [...localProject.deprecatedFiles, fileId];
+    setLocalProject({ ...localProject, deprecatedFiles: newDeprecated });
+    onFileDeprecated(fileId, !current);
+  };
+
+  const handleEdgeTypeChange = (edgeId: string, newType: LineageEdge['type']) => {
+    onEdgeUpdate(edgeId, { type: newType });
+    if (selectedEdge?.id === edgeId) {
+      setSelectedEdge({ ...selectedEdge, type: newType });
+    }
+  };
+
+  const handleEdgeConfidenceChange = (edgeId: string, confidence: number) => {
+    onEdgeUpdate(edgeId, { confidence });
+    if (selectedEdge?.id === edgeId) {
+      setSelectedEdge({ ...selectedEdge, confidence });
+    }
+  };
+
+  const isEdgeConfirmed = (edgeId: string) => localProject.confirmedEdges.includes(edgeId);
+  const isEdgeDeprecated = (edgeId: string) => localProject.deprecatedEdges.includes(edgeId);
+  const isFileDeprecated = (fileId: string) => localProject.deprecatedFiles.includes(fileId);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px' }}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '1000px' }}>
         <div className="modal-header">
           <h2 className="modal-title">校对窗口</h2>
           <button className="close-btn" onClick={onClose}>×</button>
@@ -91,47 +131,38 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
               className="form-input"
               value={filter}
               onChange={(e) => setFilter(e.target.value as any)}
-              style={{ width: '150px' }}
+              style={{ width: '120px' }}
             >
-              <option value="all">全部关系</option>
+              <option value="all">全部</option>
               <option value="uncertain">不确定</option>
               <option value="confirmed">已确认</option>
               <option value="deprecated">已废弃</option>
             </select>
-            <select
-              className="form-input"
-              value={fileFilter}
-              onChange={(e) => setFileFilter(e.target.value as any)}
-              style={{ width: '150px' }}
+          </div>
+
+          <div className="tabs" style={{ marginBottom: '12px' }}>
+            <button
+              className={`tab ${viewMode === 'edges' ? 'active' : ''}`}
+              onClick={() => setViewMode('edges')}
             >
-              <option value="all">全部文件</option>
-              <option value="deprecated">已废弃文件</option>
-            </select>
+              关系列表 ({filteredEdges.length})
+            </button>
+            <button
+              className={`tab ${viewMode === 'files' ? 'active' : ''}`}
+              onClick={() => setViewMode('files')}
+            >
+              文件列表 ({filteredFiles.length})
+            </button>
           </div>
 
           <div style={{ display: 'flex', gap: '20px' }}>
             <div style={{ flex: 1 }}>
-              <div className="tabs" style={{ marginBottom: '12px' }}>
-                <button
-                  className={`tab ${!selectedFile ? 'active' : ''}`}
-                  onClick={() => setSelectedFile(null)}
-                >
-                  关系 ({filteredEdges.length})
-                </button>
-                <button
-                  className={`tab ${selectedFile ? 'active' : ''}`}
-                  onClick={() => setSelectedFile(null)}
-                >
-                  文件 ({filteredFiles.length})
-                </button>
-              </div>
-
-              {!selectedFile ? (
-                <div style={{ maxHeight: '350px', overflowY: 'auto' }}>
+              {viewMode === 'edges' ? (
+                <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
                   {filteredEdges.map(edge => {
                     const { source, target } = getEdgeDetails(edge);
-                    const isConfirmed = project.confirmedEdges.includes(edge.id);
-                    const isDeprecated = project.deprecatedEdges.includes(edge.id);
+                    const confirmed = isEdgeConfirmed(edge.id);
+                    const deprecated = isEdgeDeprecated(edge.id);
                     return (
                       <div
                         key={edge.id}
@@ -139,7 +170,7 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
                         style={{
                           cursor: 'pointer',
                           background: selectedEdge?.id === edge.id ? '#3a3a3a' : undefined,
-                          opacity: isDeprecated ? 0.5 : 1
+                          opacity: deprecated ? 0.5 : 1
                         }}
                         onClick={() => {
                           setSelectedEdge(edge);
@@ -156,9 +187,9 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
                           </div>
                         </div>
                         <div>
-                          {isConfirmed && <span className="confirmed-badge">已确认</span>}
-                          {isDeprecated && <span className="deprecated-badge">已废弃</span>}
-                          {!isConfirmed && !isDeprecated && edge.confidence < 0.9 && (
+                          {confirmed && <span className="confirmed-badge">已确认</span>}
+                          {deprecated && <span className="deprecated-badge">已废弃</span>}
+                          {!confirmed && !deprecated && edge.confidence < 0.9 && (
                             <span className="confidence-badge confidence-medium">待确认</span>
                           )}
                         </div>
@@ -167,9 +198,9 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
                   })}
                 </div>
               ) : (
-                <div style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
                   {filteredFiles.map(file => {
-                    const isDeprecated = project.deprecatedFiles.includes(file.id);
+                    const deprecated = isFileDeprecated(file.id);
                     return (
                       <div
                         key={file.id}
@@ -177,16 +208,19 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
                         style={{
                           cursor: 'pointer',
                           background: selectedFile?.id === file.id ? '#3a3a3a' : undefined,
-                          opacity: isDeprecated ? 0.5 : 1
+                          opacity: deprecated ? 0.5 : 1
                         }}
                         onClick={() => {
                           setSelectedFile(file);
                           setSelectedEdge(null);
                         }}
+                        onDoubleClick={() => handleFileToggleDeprecated(file.id, deprecated)}
                       >
                         <div className="edge-item-name">{file.name}</div>
                         <span className={`file-item-type type-${file.type}`}>{file.type}</span>
-                        {isDeprecated && <span className="deprecated-badge" style={{ marginLeft: '8px' }}>已废弃</span>}
+                        {deprecated && (
+                          <span className="deprecated-badge" style={{ marginLeft: '8px' }}>已废弃</span>
+                        )}
                       </div>
                     );
                   })}
@@ -217,7 +251,7 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
                       <select
                         className="form-input"
                         value={selectedEdge.type}
-                        onChange={(e) => onEdgeUpdate(selectedEdge.id, { type: e.target.value as any })}
+                        onChange={(e) => handleEdgeTypeChange(selectedEdge.id, e.target.value as LineageEdge['type'])}
                       >
                         <option value="reference">引用</option>
                         <option value="input">输入</option>
@@ -234,7 +268,7 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
                           min="0"
                           max="100"
                           value={selectedEdge.confidence * 100}
-                          onChange={(e) => onEdgeUpdate(selectedEdge.id, { confidence: Number(e.target.value) / 100 })}
+                          onChange={(e) => handleEdgeConfidenceChange(selectedEdge.id, Number(e.target.value) / 100)}
                           style={{ flex: 1 }}
                         />
                         <span>{Math.round(selectedEdge.confidence * 100)}%</span>
@@ -259,17 +293,17 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
                     <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
                       <button
                         className="btn btn-primary"
-                        onClick={handleConfirm}
-                        disabled={project.confirmedEdges.includes(selectedEdge.id)}
+                        onClick={handleEdgeConfirm}
+                        disabled={isEdgeConfirmed(selectedEdge.id)}
                       >
-                        确认关系
+                        {isEdgeConfirmed(selectedEdge.id) ? '已确认' : '确认关系'}
                       </button>
                       <button
                         className="btn btn-danger"
-                        onClick={handleMarkDeprecatedEdge}
-                        disabled={project.deprecatedEdges.includes(selectedEdge.id)}
+                        onClick={handleEdgeMarkDeprecated}
+                        disabled={isEdgeDeprecated(selectedEdge.id)}
                       >
-                        标记废弃
+                        {isEdgeDeprecated(selectedEdge.id) ? '已废弃' : '标记废弃'}
                       </button>
                     </div>
                   </>
@@ -290,11 +324,11 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ graph, project, onClose, onEd
                     <div className="info-section">
                       <div className="info-label">文件状态</div>
                       <button
-                        className={`btn ${project.deprecatedFiles.includes(selectedFile.id) ? 'btn-secondary' : 'btn-danger'}`}
-                        onClick={() => onFileDeprecated(selectedFile.id, !project.deprecatedFiles.includes(selectedFile.id))}
+                        className={`btn ${isFileDeprecated(selectedFile.id) ? 'btn-secondary' : 'btn-danger'}`}
+                        onClick={() => handleFileToggleDeprecated(selectedFile.id, isFileDeprecated(selectedFile.id))}
                         style={{ width: '100%' }}
                       >
-                        {project.deprecatedFiles.includes(selectedFile.id) ? '取消废弃标记' : '标记为废弃'}
+                        {isFileDeprecated(selectedFile.id) ? '取消废弃标记' : '标记为废弃'}
                       </button>
                     </div>
                   </>

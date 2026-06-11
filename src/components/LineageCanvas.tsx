@@ -23,7 +23,6 @@ const colorSchemes = {
     data: '#607d8b',
     other: '#795548'
   },
-  owner: {} as Record<string, string>,
   date: {
     recent: '#4caf50',
     week: '#ff9800',
@@ -41,6 +40,7 @@ const ownerColors = [
 const LineageCanvas = forwardRef<any, LineageCanvasProps>((props, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
+  const collapsedNodeIds = useRef<Set<string>>(new Set());
 
   useImperativeHandle(ref, () => ({
     zoom: (level: number) => {
@@ -54,6 +54,71 @@ const LineageCanvas = forwardRef<any, LineageCanvasProps>((props, ref) => {
       }
     }
   }));
+
+  const getDownstreamNodes = (nodeId: string): string[] => {
+    const result: string[] = [];
+    const visited = new Set<string>();
+    
+    const collect = (id: string) => {
+      const edges = props.graph.edges.filter(e => e.source === id);
+      for (const edge of edges) {
+        if (!visited.has(edge.target)) {
+          visited.add(edge.target);
+          result.push(edge.target);
+          collect(edge.target);
+        }
+      }
+    };
+    
+    collect(nodeId);
+    return result;
+  };
+
+  const updateCollapsedVisibility = () => {
+    if (!cyRef.current) return;
+    
+    const collapsedNodes = new Set<string>();
+    
+    collapsedNodeIds.current.forEach(nodeId => {
+      collapsedNodes.add(nodeId);
+      const downstream = getDownstreamNodes(nodeId);
+      downstream.forEach(id => collapsedNodes.add(id));
+    });
+
+    cyRef.current.nodes().forEach(node => {
+      const nodeId = node.id();
+      const isCollapsed = collapsedNodeIds.current.has(nodeId);
+      
+      if (isCollapsed) {
+        node.style('opacity', 0.3);
+        node.style('borderStyle', 'dashed');
+        node.style('borderColor', '#ff9800');
+      } else if (collapsedNodes.has(nodeId)) {
+        node.style('opacity', 0.2);
+        node.style('borderStyle', 'dotted');
+        node.style('borderColor', '#ff9800');
+      } else {
+        node.style('opacity', 1);
+        node.style('borderStyle', 'solid');
+        node.style('borderColor', '#ffffff');
+      }
+    });
+
+    cyRef.current.edges().forEach(edge => {
+      const sourceId = edge.source().id();
+      const targetId = edge.target().id();
+      const sourceCollapsed = collapsedNodeIds.current.has(sourceId);
+      const targetInCollapsed = collapsedNodes.has(targetId);
+      
+      if (sourceCollapsed || targetInCollapsed) {
+        edge.style('opacity', 0.1);
+        edge.style('lineStyle', 'dashed');
+      } else {
+        edge.style('opacity', 0.7);
+        edge.style('lineStyle', 'solid');
+      }
+    });
+  };
 
   useEffect(() => {
     if (!containerRef.current || props.graph.nodes.length === 0) return;
@@ -164,12 +229,6 @@ const LineageCanvas = forwardRef<any, LineageCanvasProps>((props, ref) => {
             'border-style': 'dashed',
             'border-color': '#f44336',
             'border-width': 2
-          }
-        },
-        {
-          selector: 'node[?collapsed]',
-          style: {
-            'shape': 'barrel'
           }
         },
         {
@@ -289,18 +348,25 @@ const LineageCanvas = forwardRef<any, LineageCanvasProps>((props, ref) => {
 
     cyRef.current.on('cxttap', 'node', (evt) => {
       const nodeId = evt.target.id();
+      
+      if (collapsedNodeIds.current.has(nodeId)) {
+        collapsedNodeIds.current.delete(nodeId);
+      } else {
+        collapsedNodeIds.current.add(nodeId);
+      }
+      
       props.onToggleCollapse(nodeId);
+      updateCollapsedVisibility();
     });
 
-    cyRef.current.on('zoom', () => {
-    });
+    updateCollapsedVisibility();
 
     return () => {
       if (cyRef.current) {
         cyRef.current.destroy();
       }
     };
-  }, [props.graph, props.colorBy, props.project, props.collapsedNodes]);
+  }, [props.graph, props.colorBy, props.project]);
 
   useEffect(() => {
     if (cyRef.current && props.selectedFile) {
@@ -313,6 +379,11 @@ const LineageCanvas = forwardRef<any, LineageCanvasProps>((props, ref) => {
       }
     }
   }, [props.selectedFile, props.zoom]);
+
+  useEffect(() => {
+    collapsedNodeIds.current = new Set(props.collapsedNodes);
+    updateCollapsedVisibility();
+  }, [props.collapsedNodes]);
 
   return (
     <div ref={containerRef} className="cytoscape-container" />

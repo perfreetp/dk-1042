@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { FileNode, LineageEdge, LineageGraph, Project } from './types';
-import { analyzeLineage, groupByExtension } from './utils/lineageAnalyzer';
+import { analyzeLineage } from './utils/lineageAnalyzer';
 import { 
-  loadData, saveProject, getCurrentProject, getAllProjects, 
+  saveProject, getCurrentProject, getAllProjects, 
   createProject, setCurrentProject, applyProjectState 
 } from './utils/storage';
 import LineageCanvas from './components/LineageCanvas';
@@ -39,6 +39,7 @@ const App: React.FC = () => {
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [colorByKey, setColorByKey] = useState(0);
 
   useEffect(() => {
     const loadedProjects = getAllProjects();
@@ -54,14 +55,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    if (project && files.length > 0) {
-      const updatedGraph = applyProjectState(graph, project);
-      setGraph(updatedGraph);
-    }
-  }, [project]);
-
-  const loadProjectData = async (proj: Project) => {
+  const loadProjectData = useCallback(async (proj: Project) => {
     if (!window.electronAPI) {
       alert('请在 Electron 环境中运行');
       return;
@@ -74,13 +68,20 @@ const App: React.FC = () => {
       
       const fileContents = new Map(Object.entries(result.contents));
       const analysis = analyzeLineage(result.files, fileContents);
-      setGraph(applyProjectState(analysis, proj));
+      const updatedGraph = applyProjectState(analysis, proj);
+      setGraph(updatedGraph);
     } catch (error) {
       console.error('Failed to load project data:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (project) {
+      loadProjectData(project);
+    }
+  }, [project?.id]);
 
   const handleNewProject = async () => {
     const name = prompt('请输入项目名称:');
@@ -96,20 +97,6 @@ const App: React.FC = () => {
         saveProject(newProject);
         setProject(newProject);
         setProjects(getAllProjects());
-        
-        setIsLoading(true);
-        try {
-          const result = await window.electronAPI.scanFolderWithContent(folderPath);
-          setFiles(result.files);
-          
-          const fileContents = new Map(Object.entries(result.contents));
-          const analysis = analyzeLineage(result.files, fileContents);
-          setGraph(applyProjectState(analysis, newProject));
-        } catch (error) {
-          console.error('Failed to analyze files:', error);
-        } finally {
-          setIsLoading(false);
-        }
       }
     }
   };
@@ -130,20 +117,6 @@ const App: React.FC = () => {
       const updatedProject = { ...project, folderPath };
       saveProject(updatedProject);
       setProject(updatedProject);
-      
-      setIsLoading(true);
-      try {
-        const result = await window.electronAPI.scanFolderWithContent(folderPath);
-        setFiles(result.files);
-        
-        const fileContents = new Map(Object.entries(result.contents));
-        const analysis = analyzeLineage(result.files, fileContents);
-        setGraph(applyProjectState(analysis, updatedProject));
-      } catch (error) {
-        console.error('Failed to analyze files:', error);
-      } finally {
-        setIsLoading(false);
-      }
     }
   };
 
@@ -151,10 +124,7 @@ const App: React.FC = () => {
     setCurrentProject(proj.id);
     setProject(proj);
     setShowProjectSelector(false);
-    
-    if (proj.folderPath) {
-      loadProjectData(proj);
-    }
+    setSelectedFile(null);
   };
 
   const handleFileSelect = (file: FileNode) => {
@@ -190,48 +160,69 @@ const App: React.FC = () => {
     setCollapsedNodes(newCollapsed);
   };
 
-  const handleEdgeUpdate = (edgeId: string, updates: Partial<LineageEdge>) => {
+  const handleEdgeUpdate = useCallback((edgeId: string, updates: Partial<LineageEdge>) => {
     setGraph(prev => ({
       ...prev,
       edges: prev.edges.map(e => e.id === edgeId ? { ...e, ...updates } : e)
     }));
     
     if (project) {
+      const currentEdge = graph.edges.find(e => e.id === edgeId);
+      if (!currentEdge) return;
+
       const updatedProject = { ...project };
+      
+      const stableEdgeId = currentEdge.id;
+      
       if (updates.confirmed !== undefined) {
+        const confirmedSet = new Set(updatedProject.confirmedEdges);
         if (updates.confirmed) {
-          if (!updatedProject.confirmedEdges.includes(edgeId)) {
-            updatedProject.confirmedEdges.push(edgeId);
-          }
+          confirmedSet.add(edgeId);
+          confirmedSet.add(stableEdgeId);
         } else {
-          updatedProject.confirmedEdges = updatedProject.confirmedEdges.filter(id => id !== edgeId);
+          confirmedSet.delete(edgeId);
+          confirmedSet.delete(stableEdgeId);
         }
+        updatedProject.confirmedEdges = Array.from(confirmedSet);
       }
+      
       if (updates.deprecated !== undefined) {
+        const deprecatedSet = new Set(updatedProject.deprecatedEdges);
         if (updates.deprecated) {
-          if (!updatedProject.deprecatedEdges.includes(edgeId)) {
-            updatedProject.deprecatedEdges.push(edgeId);
-          }
+          deprecatedSet.add(edgeId);
+          deprecatedSet.add(stableEdgeId);
         } else {
-          updatedProject.deprecatedEdges = updatedProject.deprecatedEdges.filter(id => id !== edgeId);
+          deprecatedSet.delete(edgeId);
+          deprecatedSet.delete(stableEdgeId);
+        }
+        updatedProject.deprecatedEdges = Array.from(deprecatedSet);
+      }
+
+      if (updates.type !== undefined || updates.reason !== undefined) {
+        if (!updatedProject.confirmedEdges.includes(edgeId) && !updatedProject.confirmedEdges.includes(stableEdgeId)) {
+          updatedProject.confirmedEdges.push(edgeId);
+          updatedProject.confirmedEdges.push(stableEdgeId);
         }
       }
+      
       saveProject(updatedProject);
       setProject(updatedProject);
     }
-  };
+  }, [project, graph.edges]);
 
-  const handleFileDeprecated = (fileId: string, deprecated: boolean) => {
+  const handleFileDeprecated = useCallback((fileId: string, deprecated: boolean) => {
     if (!project) return;
     
     const updatedProject = { ...project };
+    const deprecatedSet = new Set(updatedProject.deprecatedFiles);
+    
     if (deprecated) {
-      if (!updatedProject.deprecatedFiles.includes(fileId)) {
-        updatedProject.deprecatedFiles.push(fileId);
-      }
+      deprecatedSet.add(fileId);
     } else {
-      updatedProject.deprecatedFiles = updatedProject.deprecatedFiles.filter(id => id !== fileId);
+      deprecatedSet.delete(fileId);
     }
+    updatedProject.deprecatedFiles = Array.from(deprecatedSet);
+    
     saveProject(updatedProject);
     setProject(updatedProject);
     
@@ -239,9 +230,9 @@ const App: React.FC = () => {
       ...prev,
       nodes: prev.nodes.map(n => n.id === fileId ? { ...n, deprecated } : n)
     }));
-  };
+  }, [project]);
 
-  const handleMetadataUpdate = (fileId: string, metadata: { owner?: string; version?: string; description?: string }) => {
+  const handleMetadataUpdate = useCallback((fileId: string, metadata: { owner?: string; version?: string; description?: string }) => {
     if (!project) return;
     
     const updatedProject = { ...project };
@@ -254,7 +245,11 @@ const App: React.FC = () => {
     };
     saveProject(updatedProject);
     setProject(updatedProject);
-  };
+    
+    if (metadata.owner !== undefined) {
+      setColorByKey(prev => prev + 1);
+    }
+  }, [project]);
 
   const filteredFiles = files.filter(f => {
     const matchesType = filterType === 'all' || f.type === filterType;
@@ -263,22 +258,27 @@ const App: React.FC = () => {
     return matchesType && matchesSearch;
   });
 
-  const getSelectedFileCard = () => {
-    if (!selectedFile) return null;
-    const upstreamEdges = graph.edges.filter(e => e.target === selectedFile.id);
-    const downstreamEdges = graph.edges.filter(e => e.source === selectedFile.id);
+  const getSelectedFileCard = useCallback(() => {
+    if (!selectedFile || !project) return null;
+    
+    const currentFile = graph.nodes.find(n => n.id === selectedFile.id) || selectedFile;
+    const isFileDeprecated = project.deprecatedFiles.includes(currentFile.id) || currentFile.deprecated;
+    const metadata = project.fileMetadata[currentFile.id];
+    
+    const upstreamEdges = graph.edges.filter(e => e.target === currentFile.id);
+    const downstreamEdges = graph.edges.filter(e => e.source === currentFile.id);
     const upstreamFiles = graph.nodes.filter(n => upstreamEdges.some(e => e.source === n.id));
     const downstreamFiles = graph.nodes.filter(n => downstreamEdges.some(e => e.target === n.id));
     
     return {
-      node: selectedFile,
-      metadata: project?.fileMetadata[selectedFile.id],
+      node: { ...currentFile, deprecated: isFileDeprecated },
+      metadata: metadata ? { ...metadata, deprecated: isFileDeprecated } : { fileId: currentFile.id, deprecated: isFileDeprecated },
       upstreamFiles,
       downstreamFiles,
       upstreamEdges,
       downstreamEdges
     };
-  };
+  }, [selectedFile, project, graph]);
 
   return (
     <div className="app-container">
@@ -329,23 +329,26 @@ const App: React.FC = () => {
         </div>
 
         <div className="file-list">
-          {filteredFiles.map(file => (
-            <div
-              key={file.id}
-              className={`file-item ${selectedFile?.id === file.id ? 'selected' : ''} ${project?.deprecatedFiles.includes(file.id) ? 'deprecated' : ''}`}
-              onClick={() => handleFileSelect(file)}
-              style={{ opacity: project?.deprecatedFiles.includes(file.id) ? 0.5 : 1 }}
-            >
-              <div className="file-item-name">
-                {file.name}
-                {project?.deprecatedFiles.includes(file.id) && (
-                  <span className="deprecated-badge" style={{ marginLeft: '8px' }}>废弃</span>
-                )}
+          {filteredFiles.map(file => {
+            const isDeprecated = project?.deprecatedFiles.includes(file.id) || file.deprecated;
+            return (
+              <div
+                key={file.id}
+                className={`file-item ${selectedFile?.id === file.id ? 'selected' : ''}`}
+                onClick={() => handleFileSelect(file)}
+                style={{ opacity: isDeprecated ? 0.5 : 1 }}
+              >
+                <div className="file-item-name">
+                  {file.name}
+                  {isDeprecated && (
+                    <span className="deprecated-badge" style={{ marginLeft: '8px' }}>废弃</span>
+                  )}
+                </div>
+                <div className="file-item-path">{file.path}</div>
+                <span className={`file-item-type type-${file.type}`}>{file.type}</span>
               </div>
-              <div className="file-item-path">{file.path}</div>
-              <span className={`file-item-type type-${file.type}`}>{file.type}</span>
-            </div>
-          ))}
+            );
+          })}
           {filteredFiles.length === 0 && !isLoading && (
             <div className="empty-state">
               <div className="empty-state-text">暂无文件</div>
@@ -377,7 +380,10 @@ const App: React.FC = () => {
               className="form-input"
               style={{ width: '100px', padding: '6px' }}
               value={colorBy}
-              onChange={(e) => setColorBy(e.target.value as any)}
+              onChange={(e) => {
+                setColorBy(e.target.value as any);
+                setColorByKey(prev => prev + 1);
+              }}
             >
               <option value="type">按类型</option>
               <option value="owner">按负责人</option>
@@ -421,6 +427,7 @@ const App: React.FC = () => {
         <div className="canvas-container">
           {graph.nodes.length > 0 ? (
             <LineageCanvas
+              key={colorByKey}
               graph={graph}
               selectedFile={selectedFile}
               colorBy={colorBy}
@@ -445,6 +452,7 @@ const App: React.FC = () => {
         <div className={`properties-panel ${showProperties ? 'open' : ''}`}>
           {selectedFile && (
             <FileCard
+              key={selectedFile.id}
               fileCard={getSelectedFileCard()!}
               onClose={() => setShowProperties(false)}
               onMetadataUpdate={handleMetadataUpdate}

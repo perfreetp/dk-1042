@@ -20,8 +20,13 @@ const FileCard: React.FC<FileCardProps> = ({ fileCard, onClose, onMetadataUpdate
       setVersion(fileCard.metadata.version || '');
       setDescription(fileCard.metadata.description || '');
       setOwner(fileCard.metadata.owner || '');
+    } else {
+      setVersion('');
+      setDescription('');
+      setOwner('');
     }
-  }, [fileCard.metadata]);
+    setActiveTab('info');
+  }, [fileCard.node.id]);
 
   const handleSaveMetadata = () => {
     onMetadataUpdate(fileCard.node.id, {
