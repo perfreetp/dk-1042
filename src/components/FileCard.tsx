@@ -1,17 +1,35 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FileCard as FileCardType, LineageEdge } from '../types';
 
 interface FileCardProps {
   fileCard: FileCardType;
   onClose: () => void;
+  onMetadataUpdate: (fileId: string, metadata: { owner?: string; version?: string; description?: string }) => void;
   onEdgeUpdate: (edgeId: string, updates: Partial<LineageEdge>) => void;
+  onFileDeprecated: (fileId: string, deprecated: boolean) => void;
 }
 
-const FileCard: React.FC<FileCardProps> = ({ fileCard, onClose, onEdgeUpdate }) => {
+const FileCard: React.FC<FileCardProps> = ({ fileCard, onClose, onMetadataUpdate, onEdgeUpdate, onFileDeprecated }) => {
   const [activeTab, setActiveTab] = useState<'info' | 'upstream' | 'downstream'>('info');
-  const [version, setVersion] = useState<string>('v1.0');
+  const [version, setVersion] = useState<string>('');
   const [description, setDescription] = useState<string>('');
   const [owner, setOwner] = useState<string>('');
+
+  useEffect(() => {
+    if (fileCard.metadata) {
+      setVersion(fileCard.metadata.version || '');
+      setDescription(fileCard.metadata.description || '');
+      setOwner(fileCard.metadata.owner || '');
+    }
+  }, [fileCard.metadata]);
+
+  const handleSaveMetadata = () => {
+    onMetadataUpdate(fileCard.node.id, {
+      owner: owner || undefined,
+      version: version || undefined,
+      description: description || undefined
+    });
+  };
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleString('zh-CN');
@@ -23,10 +41,15 @@ const FileCard: React.FC<FileCardProps> = ({ fileCard, onClose, onEdgeUpdate }) 
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const isDeprecated = fileCard.metadata?.deprecated || fileCard.node.deprecated;
+
   return (
     <>
       <div className="panel-header">
-        <h3 className="panel-title">{fileCard.node.name}</h3>
+        <h3 className="panel-title">
+          {fileCard.node.name}
+          {isDeprecated && <span className="deprecated-badge" style={{ marginLeft: '8px' }}>已废弃</span>}
+        </h3>
         <button className="close-btn" onClick={onClose}>×</button>
       </div>
       
@@ -80,24 +103,26 @@ const FileCard: React.FC<FileCardProps> = ({ fileCard, onClose, onEdgeUpdate }) 
             </div>
 
             <div className="info-section">
-              <div className="info-label">版本号</div>
-              <input
-                type="text"
-                className="form-input"
-                value={version}
-                onChange={(e) => setVersion(e.target.value)}
-                placeholder="输入版本号"
-              />
-            </div>
-
-            <div className="info-section">
               <div className="info-label">负责人</div>
               <input
                 type="text"
                 className="form-input"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
+                onBlur={handleSaveMetadata}
                 placeholder="输入负责人"
+              />
+            </div>
+
+            <div className="info-section">
+              <div className="info-label">版本号</div>
+              <input
+                type="text"
+                className="form-input"
+                value={version}
+                onChange={(e) => setVersion(e.target.value)}
+                onBlur={handleSaveMetadata}
+                placeholder="输入版本号"
               />
             </div>
 
@@ -107,6 +132,7 @@ const FileCard: React.FC<FileCardProps> = ({ fileCard, onClose, onEdgeUpdate }) 
                 className="form-input form-textarea"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                onBlur={handleSaveMetadata}
                 placeholder="描述文件的来源和用途..."
               />
             </div>
@@ -117,6 +143,17 @@ const FileCard: React.FC<FileCardProps> = ({ fileCard, onClose, onEdgeUpdate }) 
                 <div>上游依赖: {fileCard.upstreamFiles.length} 个文件</div>
                 <div>下游影响: {fileCard.downstreamFiles.length} 个文件</div>
               </div>
+            </div>
+
+            <div className="info-section">
+              <div className="info-label">文件状态</div>
+              <button
+                className={`btn ${isDeprecated ? 'btn-secondary' : 'btn-danger'}`}
+                onClick={() => onFileDeprecated(fileCard.node.id, !isDeprecated)}
+                style={{ width: '100%' }}
+              >
+                {isDeprecated ? '取消废弃标记' : '标记为废弃'}
+              </button>
             </div>
           </>
         )}
@@ -131,7 +168,7 @@ const FileCard: React.FC<FileCardProps> = ({ fileCard, onClose, onEdgeUpdate }) 
               fileCard.upstreamEdges.map(edge => {
                 const sourceFile = fileCard.upstreamFiles.find(f => f.id === edge.source);
                 return (
-                  <div key={edge.id} className="edge-item">
+                  <div key={edge.id} className="edge-item" style={{ opacity: edge.deprecated ? 0.5 : 1 }}>
                     <div className="edge-item-name">
                       {sourceFile?.name || '未知文件'}
                       {edge.confirmed && <span className="confirmed-badge">已确认</span>}
@@ -161,7 +198,7 @@ const FileCard: React.FC<FileCardProps> = ({ fileCard, onClose, onEdgeUpdate }) 
               fileCard.downstreamEdges.map(edge => {
                 const targetFile = fileCard.downstreamFiles.find(f => f.id === edge.target);
                 return (
-                  <div key={edge.id} className="edge-item">
+                  <div key={edge.id} className="edge-item" style={{ opacity: edge.deprecated ? 0.5 : 1 }}>
                     <div className="edge-item-name">
                       {targetFile?.name || '未知文件'}
                       {edge.confirmed && <span className="confirmed-badge">已确认</span>}

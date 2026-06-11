@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { LineageGraph, FileNode, ChangePreview } from '../types';
+import { LineageGraph, FileNode, ChangePreview, Project } from '../types';
 
 interface ChangePreviewModalProps {
   graph: LineageGraph;
+  project: Project | null;
   onClose: () => void;
 }
 
-const ChangePreviewModal: React.FC<ChangePreviewModalProps> = ({ graph, onClose }) => {
+const ChangePreviewModal: React.FC<ChangePreviewModalProps> = ({ graph, onClose, project }) => {
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
   const [action, setAction] = useState<'delete' | 'replace'>('delete');
 
@@ -31,8 +32,9 @@ const ChangePreviewModal: React.FC<ChangePreviewModalProps> = ({ graph, onClose 
       
       const edges = graph.edges.filter(e => e.source === id);
       for (const edge of edges) {
+        if (project?.deprecatedEdges.includes(edge.id)) continue;
         const targetFile = graph.nodes.find(n => n.id === edge.target);
-        if (targetFile) {
+        if (targetFile && !project?.deprecatedFiles.includes(targetFile.id)) {
           downstreamFiles.push(targetFile);
           collectDownstream(edge.target);
         }
@@ -70,13 +72,15 @@ const ChangePreviewModal: React.FC<ChangePreviewModalProps> = ({ graph, onClose 
 操作: ${preview.action === 'delete' ? '删除' : '替换'}
 生成时间: ${new Date().toLocaleString('zh-CN')}
 
+文件状态: ${project?.deprecatedFiles.includes(selectedFile.id) ? '已废弃' : '正常使用'}
+
 影响范围:
 - 总受影响文件: ${graph.edges.filter(e => e.source === selectedFile.id || e.target === selectedFile.id).length}
 - 下游影响文件: ${preview.affectedReports.length}
 - 影响等级: ${preview.impactLevel === 'high' ? '高' : preview.impactLevel === 'medium' ? '中' : '低'}
 
 受影响的下游报告:
-${preview.affectedReports.map(r => `- ${r.name} (${r.path})`).join('\n')}
+${preview.affectedReports.map(r => `- ${r.name} (${r.path})`).join('\n') || '无'}
 
 清理建议:
 ${preview.impactLevel === 'high' ? '⚠️ 警告: 此操作将影响多个重要报告，建议先创建备份' : ''}
@@ -101,6 +105,7 @@ ${preview.impactLevel === 'low' ? '✓ 此操作影响较小，但仍建议通�
       targetFile: selectedFile,
       action,
       impact: preview,
+      deprecated: project?.deprecatedFiles.includes(selectedFile.id),
       graph: {
         nodes: graph.nodes.filter(n => 
           n.id === selectedFile.id ||
@@ -147,7 +152,7 @@ ${preview.impactLevel === 'low' ? '✓ 此操作影响较小，但仍建议通�
                   <option value="">-- 选择文件 --</option>
                   {graph.nodes.map(file => (
                     <option key={file.id} value={file.id}>
-                      {file.name} ({file.type})
+                      {file.name} {project?.deprecatedFiles.includes(file.id) ? '(已废弃)' : ''} ({file.type})
                     </option>
                   ))}
                 </select>
@@ -184,6 +189,9 @@ ${preview.impactLevel === 'low' ? '✓ 此操作影响较小，但仍建议通�
                       <h4 style={{ margin: 0 }}>{preview.fileName}</h4>
                       <span style={{ fontSize: '12px', color: '#a0a0a0' }}>
                         {action === 'delete' ? '删除' : '替换'}操作
+                        {project?.deprecatedFiles.includes(selectedFile!.id) && (
+                          <span className="deprecated-badge" style={{ marginLeft: '8px' }}>已废弃</span>
+                        )}
                       </span>
                     </div>
                     <span className={`preview-impact impact-${preview.impactLevel}`}>

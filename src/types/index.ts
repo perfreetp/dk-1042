@@ -7,6 +7,7 @@ export interface FileNode {
   modifiedTime: string;
   createdTime: string;
   type: 'table' | 'script' | 'report' | 'config' | 'data' | 'other';
+  deprecated?: boolean;
 }
 
 export interface LineageEdge {
@@ -25,22 +26,31 @@ export interface LineageGraph {
   edges: LineageEdge[];
 }
 
+export interface FileMetadata {
+  fileId: string;
+  owner?: string;
+  version?: string;
+  description?: string;
+  deprecated?: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
   folderPath: string;
   createdAt: string;
   lastModified: string;
-  graph: LineageGraph;
+  fileMetadata: Record<string, FileMetadata>;
+  confirmedEdges: string[];
+  deprecatedEdges: string[];
+  deprecatedFiles: string[];
 }
 
 export interface FileCard {
   node: FileNode;
-  version?: string;
-  description?: string;
-  owner?: string;
-  upstreamFiles: string[];
-  downstreamFiles: string[];
+  metadata?: FileMetadata;
+  upstreamFiles: FileNode[];
+  downstreamFiles: FileNode[];
   upstreamEdges: LineageEdge[];
   downstreamEdges: LineageEdge[];
 }
@@ -51,10 +61,22 @@ export interface ChangePreview {
   action: 'delete' | 'replace';
   affectedReports: FileNode[];
   impactLevel: 'high' | 'medium' | 'low';
+  deprecated?: boolean;
 }
 
 export interface ColorScheme {
   byOwner: Record<string, string>;
   byDate: Record<string, string>;
   byType: Record<string, string>;
+}
+
+export interface CollapsedNode {
+  nodeId: string;
+  collapsed: boolean;
+  childNodeIds: string[];
+}
+
+export interface SelectionState {
+  selectedNodeIds: string[];
+  count: number;
 }

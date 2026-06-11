@@ -69,6 +69,30 @@ ipcMain.handle('read-file', async (_, filePath: string) => {
   }
 });
 
+ipcMain.handle('scan-folder-with-content', async (_, folderPath: string) => {
+  log.info('Scanning folder with content:', folderPath);
+  const files = scanDirectory(folderPath);
+  const contents: Record<string, string> = {};
+  
+  const scriptExtensions = ['.py', '.sql', '.r', '.js', '.sh', '.bat', '.txt'];
+  
+  for (const file of files) {
+    if (scriptExtensions.includes(file.extension)) {
+      try {
+        const stats = fs.statSync(file.path);
+        if (stats.size < 1024 * 1024) {
+          const content = fs.readFileSync(file.path, 'utf-8');
+          contents[file.path] = content;
+        }
+      } catch (error) {
+        log.error('Error reading script content:', file.path, error);
+      }
+    }
+  }
+  
+  return { files, contents };
+});
+
 function scanDirectory(dirPath: string, depth = 0): any[] {
   const files: any[] = [];
   
