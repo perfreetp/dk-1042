@@ -167,48 +167,56 @@ const App: React.FC = () => {
     }));
     
     if (project) {
-      const currentEdge = graph.edges.find(e => e.id === edgeId);
-      if (!currentEdge) return;
-
       const updatedProject = { ...project };
       
-      const stableEdgeId = currentEdge.id;
+      if (!updatedProject.edgeMetadata) {
+        updatedProject.edgeMetadata = {};
+      }
+      
+      if (!updatedProject.edgeMetadata[edgeId]) {
+        updatedProject.edgeMetadata[edgeId] = { edgeId };
+      }
+      
+      if (updates.type !== undefined) {
+        updatedProject.edgeMetadata[edgeId].type = updates.type;
+      }
+      
+      if (updates.confidence !== undefined) {
+        updatedProject.edgeMetadata[edgeId].confidence = updates.confidence;
+      }
+      
+      if (updates.reason !== undefined) {
+        updatedProject.edgeMetadata[edgeId].reason = updates.reason;
+      }
       
       if (updates.confirmed !== undefined) {
+        updatedProject.edgeMetadata[edgeId].confirmed = updates.confirmed;
+        
         const confirmedSet = new Set(updatedProject.confirmedEdges);
         if (updates.confirmed) {
           confirmedSet.add(edgeId);
-          confirmedSet.add(stableEdgeId);
         } else {
           confirmedSet.delete(edgeId);
-          confirmedSet.delete(stableEdgeId);
         }
         updatedProject.confirmedEdges = Array.from(confirmedSet);
       }
       
       if (updates.deprecated !== undefined) {
+        updatedProject.edgeMetadata[edgeId].deprecated = updates.deprecated;
+        
         const deprecatedSet = new Set(updatedProject.deprecatedEdges);
         if (updates.deprecated) {
           deprecatedSet.add(edgeId);
-          deprecatedSet.add(stableEdgeId);
         } else {
           deprecatedSet.delete(edgeId);
-          deprecatedSet.delete(stableEdgeId);
         }
         updatedProject.deprecatedEdges = Array.from(deprecatedSet);
-      }
-
-      if (updates.type !== undefined || updates.reason !== undefined) {
-        if (!updatedProject.confirmedEdges.includes(edgeId) && !updatedProject.confirmedEdges.includes(stableEdgeId)) {
-          updatedProject.confirmedEdges.push(edgeId);
-          updatedProject.confirmedEdges.push(stableEdgeId);
-        }
       }
       
       saveProject(updatedProject);
       setProject(updatedProject);
     }
-  }, [project, graph.edges]);
+  }, [project]);
 
   const handleFileDeprecated = useCallback((fileId: string, deprecated: boolean) => {
     if (!project) return;
@@ -228,7 +236,12 @@ const App: React.FC = () => {
     
     setGraph(prev => ({
       ...prev,
-      nodes: prev.nodes.map(n => n.id === fileId ? { ...n, deprecated } : n)
+      nodes: prev.nodes.map(n => n.id === fileId ? { ...n, deprecated } : n),
+      edges: prev.edges.map(e => 
+        e.source === fileId || e.target === fileId
+          ? { ...e, deprecated }
+          : e
+      )
     }));
   }, [project]);
 
@@ -254,7 +267,6 @@ const App: React.FC = () => {
   const filteredFiles = files.filter(f => {
     const matchesType = filterType === 'all' || f.type === filterType;
     const matchesSearch = f.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const isDeprecated = project?.deprecatedFiles.includes(f.id);
     return matchesType && matchesSearch;
   });
 
@@ -330,7 +342,7 @@ const App: React.FC = () => {
 
         <div className="file-list">
           {filteredFiles.map(file => {
-            const isDeprecated = project?.deprecatedFiles.includes(file.id) || file.deprecated;
+            const isDeprecated = project?.deprecatedFiles.includes(file.id);
             return (
               <div
                 key={file.id}

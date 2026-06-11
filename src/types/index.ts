@@ -34,6 +34,15 @@ export interface FileMetadata {
   deprecated?: boolean;
 }
 
+export interface EdgeMetadata {
+  edgeId: string;
+  type?: 'reference' | 'input' | 'output' | 'version';
+  confidence?: number;
+  reason?: string;
+  confirmed?: boolean;
+  deprecated?: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -41,6 +50,7 @@ export interface Project {
   createdAt: string;
   lastModified: string;
   fileMetadata: Record<string, FileMetadata>;
+  edgeMetadata: Record<string, EdgeMetadata>;
   confirmedEdges: string[];
   deprecatedEdges: string[];
   deprecatedFiles: string[];
